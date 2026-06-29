@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Agriculture Dashboard — แปลงทดลอง IoT</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #0e1310;
+    --panel: #161d18;
+    --panel-2: #1c241e;
+    --line: #2a352d;
+    --text: #e8efe6;
+    --muted: #8aa092;
+    --accent: #6fd394;      /* growth green */
+    --accent-2: #c9a227;    /* soil amber */
+    --mono: 'JetBrains Mono', 'Consolas', monospace;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --gray-bg: #d9dcd6;
+    --gray-text: #1a1a1a;
+    --green-bg: #2f8f5b;
+    --yellow-bg: #d9b53c;
+    --red-bg: #b8453a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); padding:24px; min-height:100vh;
+  }
+  header{
+    display:flex; justify-content:space-between; align-items:baseline;
+    border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:22px;
+    flex-wrap:wrap; gap:8px;
+  }
+  header h1{ font-size:1.4rem; margin:0; letter-spacing:.02em; }
+  header h1 span{ color:var(--accent); }
+  #lastUpdate{ font-family:var(--mono); font-size:.8rem; color:var(--muted); }
+
+  .grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr));
+    gap:14px; margin-bottom:24px;
+  }
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px; display:flex; flex-direction:column; gap:8px;
+  }
+  .card .label{ font-size:.78rem; color:var(--muted); letter-spacing:.03em; }
+  .card .unit{ font-size:.7rem; color:var(--muted); }
+  .readout{
+    border-radius:8px; padding:14px 10px; text-align:center;
+    font-family:var(--mono); font-size:1.7rem; font-weight:600;
+    background:var(--gray-bg); color:var(--gray-text);
+    transition:background .4s, color .4s;
+  }
+
+  section.panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:18px; margin-bottom:22px;
+  }
+  section.panel h2{
+    font-size:1rem; margin:0 0 12px; color:var(--accent); letter-spacing:.02em;
+  }
+  #chartWrap{ height:380px; position:relative; }
+
+  .ai-row{ display:flex; gap:16px; flex-wrap:wrap; }
+  .ai-col{ flex:1 1 360px; }
+  textarea#apiKeyInput{
+    width:100%; background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:8px; font-family:var(--mono); font-size:.75rem; resize:none; height:38px;
+  }
+  button{
+    background:var(--accent); color:#0e1310; border:none; border-radius:6px;
+    padding:9px 16px; font-weight:600; cursor:pointer; font-size:.85rem;
+  }
+  button:hover{ filter:brightness(1.08); }
+  button:disabled{ opacity:.5; cursor:wait; }
+
+  #aiOutput, #statusBox{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    padding:14px; font-size:.9rem; line-height:1.6; white-space:pre-wrap; min-height:60px;
+  }
+  #statusBox.normal{ border-color:var(--accent); }
+  #statusBox.warn{ border-color:var(--accent-2); }
+
+  .note{ font-size:.72rem; color:var(--muted); margin-top:10px; line-height:1.5; }
+  .small-input-row{ display:flex; gap:8px; align-items:center; margin-bottom:10px; }
+  .small-input-row label{ font-size:.75rem; color:var(--muted); white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌱 Smart Agriculture <span>Dashboard</span></h1>
+  <div id="lastUpdate">รอข้อมูล...</div>
+</header>
+
+<!-- ===== ส่วนบน: ค่าปัจจุบัน ===== -->
+<div class="grid">
+  <div class="card">
+    <div class="label">อุณหภูมิ (T)</div>
+    <div class="readout" id="val-T">--</div>
+    <div class="unit">°C</div>
+  </div>
+  <div class="card">
+    <div class="label">ความชื้นสัมพัทธ์ (RH)</div>
+    <div class="readout" id="val-RH">--</div>
+    <div class="unit">%</div>
+  </div>
+  <div class="card">
+    <div class="label">VPD</div>
+    <div class="readout" id="val-VPD">--</div>
+    <div class="unit">kPa</div>
+  </div>
+  <div class="card">
+    <div class="label">PAR</div>
+    <div class="readout" id="val-PAR">--</div>
+    <div class="unit">µmol·m⁻²·s⁻¹</div>
+  </div>
+  <div class="card">
+    <div class="label">ความชื้นในดิน (VWC)</div>
+    <div class="readout" id="val-VWC">--</div>
+    <div class="unit">%</div>
+  </div>
+  <div class="card">
+    <div class="label">Bio-impedance (Z)</div>
+    <div class="readout" id="val-Z">--</div>
+    <div class="unit">kΩ</div>
+  </div>
+</div>
+
+<!-- ===== กราฟย้อนหลัง 1 ชั่วโมง ===== -->
+<section class="panel">
+  <h2>กราฟค่าวัด ย้อนหลัง 1 ชั่วโมง</h2>
+  <div id="chartWrap"><canvas id="historyChart"></canvas></div>
+  <div class="note">เส้น Z (Bio-impedance) แสดงเป็นเส้นหนากว่าค่าอื่น แต่ละค่าใช้แกน Y อิสระของตัวเอง (ซ่อนไว้) เพื่อให้เห็นแนวโน้มของแต่ละค่าชัดเจนโดยไม่ถูกบีบจากสเกลต่างกัน</div>
+</section>
+
+<!-- ===== ส่วนล่าง: AI วิเคราะห์ ===== -->
+<section class="panel">
+  <h2>วิเคราะห์เทรนด์ด้วย AI (Gemini)</h2>
+  <div class="small-input-row">
+    <label for="apiKeyInput">Gemini API key:</label>
+    <textarea id="apiKeyInput" spellcheck="false"></textarea>
+  </div>
+  <div class="ai-row">
+    <div class="ai-col">
+      <button id="runAiBtn">วิเคราะห์เทรนด์ 1 ชั่วโมงล่าสุด</button>
+      <div id="aiOutput" style="margin-top:12px;">กดปุ่มเพื่อให้ AI สรุปเทรนด์ VPD / PAR / VWC / Z ย้อนหลัง 1 ชั่วโมง</div>
+    </div>
+    <div class="ai-col">
+      <div class="label" style="margin-bottom:6px;color:var(--muted);font-size:.8rem;">ผลเทียบเงื่อนไขจากชีต "สถานะ"</div>
+      <div id="statusBox" class="normal">ยังไม่มีข้อมูล</div>
+    </div>
+  </div>
+  <div class="note">
+    ⚠️ คำเตือนความปลอดภัย: คีย์ API ที่ใส่ในกล่องด้านบนจะถูกฝังอยู่ในโค้ดฝั่งเบราว์เซอร์ (client-side) — ใครก็ตามที่เปิดดู "view source" ของหน้านี้ หรือเปิด Developer Tools สามารถเห็นคีย์และนำไปใช้แทนคุณได้ หากนำไฟล์นี้ไปวางบนเว็บสาธารณะ แนะนำให้สร้างคีย์ใหม่ที่จำกัดสิทธิ์ (restricted key) ผ่าน Google AI Studio และจำกัด referrer/IP หรือทำ proxy ผ่านเซิร์ฟเวอร์ของตนเองแทนการเรียก API ตรงจากเบราว์เซอร์
+  </div>
+</section>
+
+<div class="note" id="assumptionNote"></div>
+
+<script>
+/* =========================================================================
+   CONFIG
+   ========================================================================= */
+const SHEET_ID = "1ZHaEGLOOijOcU1XTUxx5mhX50iLAVWq4MCaJnhxvh24";
+const SHEET_DATA = "ชีต1";
+const SHEET_STATUS = "สถานะ";
+const REFRESH_MS = 30000;          // รีเฟรชข้อมูลทุก 30 วินาที
+const AI_REFRESH_MS = 5 * 60000;   // เรียก Gemini อัตโนมัติทุก 5 นาที (กดปุ่มเพื่อสั่งทันทีได้)
+const HISTORY_MINUTES = 60;
+
+// ใส่คีย์ที่ผู้ใช้ระบุไว้ล่วงหน้า (ดูคำเตือนความปลอดภัยใต้กล่อง AI ด้านบน)
+document.getElementById('apiKeyInput').value = "AQ.Ab8RN6LjxlOBxHz1yr4IwP0xA7MxwAFfmTk2fAjFkb-E2Nn9NA";
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+/* คอลัมน์ชีต "ชีต1": A=เวลา(สมมติ), B=T, C=RH, F=VPD, G=PAR, K=Z, L=VWC */
+const COL = { TIME:0, T:1, RH:2, VPD:5, PAR:6, Z:10, VWC:11 };
+
+/* =========================================================================
+   GOOGLE SHEETS (gviz) FETCH
+   ========================================================================= */
+function gvizUrl(sheetName){
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}&_=${Date.now()}`;
+}
+
+async function fetchSheetTable(sheetName){
+  const res = await fetch(gvizUrl(sheetName));
+  if(!res.ok) throw new Error(`โหลดชีต "${sheetName}" ไม่สำเร็จ (${res.status}) — ตรวจสอบว่าตั้งค่าชีตเป็น "ทุกคนที่มีลิงก์สามารถดูได้"`);
+  const text = await res.text();
+  const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  return json.table; // {cols:[...], rows:[...]}
+}
+
+function cellVal(row, idx){
+  if(!row || !row.c || !row.c[idx]) return null;
+  const c = row.c[idx];
+  return c.v !== undefined ? c.v : null;
+}
+function cellText(row, idx){
+  if(!row || !row.c || !row.c[idx]) return "";
+  const c = row.c[idx];
+  return (c.f !== undefined && c.f !== null) ? String(c.f) : (c.v !== undefined && c.v !== null ? String(c.v) : "");
+}
+
+/* gviz มักส่งวันที่เป็นรูปแบบ "Date(yyyy,m,d,H,M,S)" ใน v, หรือเป็นข้อความที่ format แล้วใน f */
+function parseGvizDate(row, idx){
+  if(!row || !row.c || !row.c[idx]) return null;
+  const c = row.c[idx];
+  if(typeof c.v === 'string' && c.v.startsWith('Date(')){
+    const m = c.v.match(/Date\(([^)]+)\)/);
+    if(m){
+      const p = m[1].split(',').map(Number);
+      return new Date(p[0], p[1], p[2], p[3]||0, p[4]||0, p[5]||0);
+    }
+  }
+  const tryStr = c.f || c.v;
+  const d = new Date(tryStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* =========================================================================
+   เงื่อนไขสี — ส่วนบนของ Dashboard
+   ========================================================================= */
+function setReadout(id, value, unit, bg, color){
+  const el = document.getElementById(id);
+  el.textContent = (value===null || value===undefined || isNaN(value)) ? "--" : Number(value).toFixed(2);
+  el.style.background = bg;
+  el.style.color = color;
+}
+
+function styleNeutral(id, value){
+  setReadout(id, value, "", "var(--gray-bg)", "var(--gray-text)");
+}
+
+function styleVPD(value){
+  if(value===null) return setReadout('val-VPD', value, "", "var(--gray-bg)", "var(--gray-text)");
+  if(value >= 0 && value <= 1) setReadout('val-VPD', value, "", "var(--green-bg)", "#fff");
+  else if(value > 1 && value <= 2.5) setReadout('val-VPD', value, "", "var(--yellow-bg)", "#1a1a1a");
+  else setReadout('val-VPD', value, "", "var(--red-bg)", "#1a1a1a");
+}
+
+function stylePAR(value){
+  if(value===null) return setReadout('val-PAR', value, "", "var(--gray-bg)", "var(--gray-text)");
+  if(value >= 0 && value <= 1000) setReadout('val-PAR', value, "", "var(--green-bg)", "#fff");
+  else setReadout('val-PAR', value, "", "var(--red-bg)", "#1a1a1a");
+}
+
+function styleVWC(value){
+  if(value===null) return setReadout('val-VWC', value, "", "var(--gray-bg)", "var(--gray-text)");
+  if(value < 15) setReadout('val-VWC', value, "", "var(--red-bg)", "#1a1a1a");
+  else if(value >= 15 && value <= 30) setReadout('val-VWC', value, "", "var(--yellow-bg)", "#1a1a1a");
+  else if(value > 35) setReadout('val-VWC', value, "", "var(--green-bg)", "#fff");
+  else setReadout('val-VWC', value, "", "var(--gray-bg)", "var(--gray-text)"); // ช่วง 30-35 ไม่ได้ระบุเงื่อนไข
+}
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+let historyRows = [];      // แถวข้อมูล "ชีต1" ภายใน 1 ชั่วโมงล่าสุด
+let latestValues = {};     // ค่าล่าสุดของแต่ละตัวแปร
+let chartInstance = null;
+let aiTimer = null;
+
+/* =========================================================================
+   โหลดข้อมูลหลักจาก "ชีต1" แล้วอัปเดต UI + กราฟ
+   ========================================================================= */
+async function refreshData(){
+  try{
+    const table = await fetchSheetTable(SHEET_DATA);
+    const rows = table.rows || [];
+    if(rows.length === 0) return;
+
+    const lastRow = rows[rows.length - 1];
+    latestValues = {
+      T:   cellVal(lastRow, COL.T),
+      RH:  cellVal(lastRow, COL.RH),
+      VPD: cellVal(lastRow, COL.VPD),
+      PAR: cellVal(lastRow, COL.PAR),
+      Z:   cellVal(lastRow, COL.Z),
+      VWC: cellVal(lastRow, COL.VWC),
+    };
+
+    styleNeutral('val-T', latestValues.T);
+    styleNeutral('val-RH', latestValues.RH);
+    styleVPD(latestValues.VPD);
+    stylePAR(latestValues.PAR);
+    styleVWC(latestValues.VWC);
+    styleNeutral('val-Z', latestValues.Z);
+
+    // กรองแถวภายใน 1 ชั่วโมงที่ผ่านมา โดยใช้ timestamp คอลัมน์ A หากแปลงได้
+    const now = new Date();
+    const withTime = rows.map(r => ({ row:r, t: parseGvizDate(r, COL.TIME) }));
+    const validTime = withTime.filter(x => x.t !== null);
+
+    if(validTime.length > 5){
+      historyRows = validTime
+        .filter(x => (now - x.t) <= HISTORY_MINUTES*60000)
+        .map(x => x.row);
+      if(historyRows.length < 2) historyRows = validTime.slice(-60).map(x=>x.row);
+    } else {
+      // ไม่สามารถอ่าน timestamp ได้ -> fallback ใช้ 60 แถวล่าสุดแทน
+      historyRows = rows.slice(-60);
+    }
+
+    updateChart();
+    document.getElementById('lastUpdate').textContent =
+      "อัปเดตล่าสุด: " + now.toLocaleTimeString('th-TH');
+
+    await evaluateStatus();
+  }catch(err){
+    document.getElementById('lastUpdate').textContent = "เกิดข้อผิดพลาด: " + err.message;
+    console.error(err);
+  }
+}
+
+/* =========================================================================
+   กราฟ — แต่ละค่าใช้แกน Y อิสระ (ซ่อน) เพื่อไม่ให้สเกลต่างกันบีบกัน
+   ========================================================================= */
+function updateChart(){
+  const labels = historyRows.map((r,i) => {
+    const d = parseGvizDate(r, COL.TIME);
+    return d ? d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}) : String(i);
+  });
+
+  const series = [
+    { key:'T',   label:'T (°C)',   color:'#e07a5f', width:1.5 },
+    { key:'RH',  label:'RH (%)',   color:'#81b29a', width:1.5 },
+    { key:'VPD', label:'VPD (kPa)',color:'#f2cc8f', width:1.5 },
+    { key:'PAR', label:'PAR',      color:'#3d8bfd', width:1.5 },
+    { key:'VWC', label:'VWC (%)',  color:'#9d4edd', width:1.5 },
+    { key:'Z',   label:'Z (kΩ)',   color:'#6fd394', width:3.5 }, // เส้นหนา
+  ];
+
+  const datasets = series.map((s, idx) => ({
+    label: s.label,
+    data: historyRows.map(r => cellVal(r, COL[s.key])),
+    borderColor: s.color,
+    backgroundColor: s.color,
+    borderWidth: s.width,
+    pointRadius: 0,
+    tension: 0.25,
+    yAxisID: 'y' + idx,
+  }));
+
+  const scales = { x: { ticks:{ color:'#8aa092', maxTicksLimit:10 }, grid:{ color:'#222a24' } } };
+  series.forEach((s, idx) => {
+    scales['y'+idx] = {
+      display: idx === 5, // แสดงแกนอ้างอิงเดียว (Z) เพื่อไม่ให้รก ที่เหลือซ่อนแต่ยังสเกลอิสระ
+      position: 'right',
+      ticks:{ color:'#8aa092' },
+      grid:{ drawOnChartArea: idx===5, color:'#222a24' },
+    };
+  });
+
+  if(chartInstance){
+    chartInstance.data.labels = labels;
+    chartInstance.data.datasets = datasets;
+    chartInstance.options.scales = scales;
+    chartInstance.update();
+    return;
+  }
+
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'nearest', intersect:false },
+      plugins:{ legend:{ labels:{ color:'#e8efe6' } } },
+      scales,
+    }
+  });
+}
+
+/* =========================================================================
+   ชีต "สถานะ" — จับคู่เงื่อนไขเพื่อสรุปสถานะความเครียด
+   รูปแบบเงื่อนไขที่รองรับในแต่ละช่อง: "0-1" (ช่วง), ">2.5", "<15", ">=x", "<=x"
+   สำหรับคอลัมน์ Z (เป็นแนวโน้ม ไม่ใช่ค่าตรง) จะจับคำว่า "เพิ่ม" / "ลด" / "คงที่"
+   หรือถ้าเป็นตัวเลขจะตีความเป็น % การเปลี่ยนแปลงในชั่วโมงที่ผ่านมา
+   ========================================================================= */
+function inRange(value, condText){
+  condText = (condText||"").trim();
+  if(condText === "") return false;
+  if(value === null || value === undefined || isNaN(value)) return false;
+
+  let m;
+  if((m = condText.match(/^(-?\d+\.?\d*)\s*-\s*(-?\d+\.?\d*)$/))){
+    const lo = parseFloat(m[1]), hi = parseFloat(m[2]);
+    return value >= Math.min(lo,hi) && value <= Math.max(lo,hi);
+  }
+  if((m = condText.match(/^>=\s*(-?\d+\.?\d*)$/))) return value >= parseFloat(m[1]);
+  if((m = condText.match(/^<=\s*(-?\d+\.?\d*)$/))) return value <= parseFloat(m[1]);
+  if((m = condText.match(/^>\s*(-?\d+\.?\d*)$/)))  return value >  parseFloat(m[1]);
+  if((m = condText.match(/^<\s*(-?\d+\.?\d*)$/)))   return value <  parseFloat(m[1]);
+  if((m = condText.match(/^(-?\d+\.?\d*)$/)))        return value === parseFloat(m[1]);
+  return false;
+}
+
+function zTrendLabel(){
+  if(historyRows.length < 2) return { label:'คงที่', pct:0 };
+  const first = cellVal(historyRows[0], COL.Z);
+  const last = cellVal(historyRows[historyRows.length-1], COL.Z);
+  if(first===null || last===null || first===0) return { label:'คงที่', pct:0 };
+  const pct = ((last-first)/Math.abs(first))*100;
+  if(pct > 5) return { label:'เพิ่มขึ้น', pct };
+  if(pct < -5) return { label:'ลดลง', pct };
+  return { label:'คงที่', pct };
+}
+
+function matchZCondition(condText, trend){
+  condText = (condText||"").trim();
+  if(condText === "") return false;
+  if(/เพิ่ม/.test(condText)) return trend.label === 'เพิ่มขึ้น';
+  if(/ลด/.test(condText)) return trend.label === 'ลดลง';
+  if(/คงที่|ปกติ|stable/i.test(condText)) return trend.label === 'คงที่';
+  // ถ้าระบุเป็นตัวเลข ให้ตีความว่าเป็นช่วง % การเปลี่ยนแปลง
+  return inRange(trend.pct, condText);
+}
+
+function findHeaderIndex(headerRow, keywords){
+  if(!headerRow) return -1;
+  for(let i=0;i<headerRow.c.length;i++){
+    const txt = cellText(headerRow, i);
+    if(keywords.some(k => txt.includes(k))) return i;
+  }
+  return -1;
+}
+
+async function evaluateStatus(){
+  const box = document.getElementById('statusBox');
+  try{
+    const table = await fetchSheetTable(SHEET_STATUS);
+    const rows = table.rows || [];
+    if(rows.length === 0){ box.textContent = "ไม่พบข้อมูลในชีต \"สถานะ\""; return; }
+
+    const headerRow = rows[0];
+    const idxSpecial   = findHeaderIndex(headerRow, ["เงื่อนไขพิเศษ"]);
+    const idxForecast  = findHeaderIndex(headerRow, ["พยากรณ์สถานะความเครียด","พยากรณ์"]);
+    const idxAdvice     = findHeaderIndex(headerRow, ["ข้อเสนอแนะในการจัดการ","ข้อเสนอแนะ"]);
+
+    const trend = zTrendLabel();
+    let matched = null;
+
+    for(let i=1;i<rows.length;i++){
+      const r = rows[i];
+      const okVPD = inRange(latestValues.VPD, cellText(r,1)); // column B
+      const okPAR = inRange(latestValues.PAR, cellText(r,2)); // column C
+      const okVWC = inRange(latestValues.VWC, cellText(r,3)); // column D
+      const okZ   = matchZCondition(cellText(r,4), trend);    // column E
+      if(okVPD && okPAR && okVWC && okZ){ matched = r; break; }
+    }
+
+    if(matched){
+      const forecast = idxForecast>=0 ? cellText(matched, idxForecast) : "";
+      const advice = idxAdvice>=0 ? cellText(matched, idxAdvice) : "";
+      const special = idxSpecial>=0 ? cellText(matched, idxSpecial) : "";
+      box.className = "warn";
+      box.textContent =
+        (forecast ? "พยากรณ์สถานะความเครียด: " + forecast + "\n" : "") +
+        (advice ? "ข้อเสนอแนะในการจัดการ: " + advice : "") +
+        (special ? "\nเงื่อนไขพิเศษ: " + special : "");
+    } else {
+      box.className = "normal";
+      box.textContent = "สถานะความเครียดอยู่ในระดับปกติ";
+    }
+  }catch(err){
+    box.textContent = "เกิดข้อผิดพลาดในการตรวจสอบชีต \"สถานะ\": " + err.message;
+    console.error(err);
+  }
+}
+
+/* =========================================================================
+   Gemini — สรุปเทรนด์ภาษาธรรมชาติจากข้อมูล 1 ชั่วโมงล่าสุด
+   ========================================================================= */
+async function runAiAnalysis(){
+  const btn = document.getElementById('runAiBtn');
+  const out = document.getElementById('aiOutput');
+  const apiKey = document.getElementById('apiKeyInput').value.trim();
+  if(!apiKey){ out.textContent = "กรุณาใส่ Gemini API key ก่อน"; return; }
+  if(historyRows.length === 0){ out.textContent = "ยังไม่มีข้อมูลย้อนหลังให้วิเคราะห์"; return; }
+
+  btn.disabled = true;
+  out.textContent = "กำลังวิเคราะห์...";
+
+  const summary = historyRows.map(r => ({
+    vpd: cellVal(r, COL.VPD), par: cellVal(r, COL.PAR),
+    vwc: cellVal(r, COL.VWC), z: cellVal(r, COL.Z),
+  }));
+
+  const prompt =
+    "คุณเป็นผู้ช่วยวิเคราะห์ข้อมูลเกษตรอัจฉริยะ ข้อมูลต่อไปนี้คือค่า VPD (kPa), PAR (µmol/m²/s), " +
+    "VWC ดิน (%), และ Bio-impedance Z (kΩ) ที่วัดได้ทุกช่วงเวลาในชั่วโมงที่ผ่านมา เรียงจากเก่าไปใหม่:\n" +
+    JSON.stringify(summary) +
+    "\n\nกรุณาสรุปเป็นภาษาไทย 3-5 บรรทัด อธิบายแนวโน้มของอากาศ (VPD) แสง (PAR) ความชื้นดิน (VWC) " +
+    "และแนวโน้ม Bio-impedance (Z) ว่ามีทิศทางอย่างไรในชั่วโมงที่ผ่านมา โดยใช้ภาษากระชับเข้าใจง่ายสำหรับเกษตรกร";
+
+  try{
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ role:"user", parts:[{ text: prompt }] }] }),
+      }
+    );
+    const data = await res.json();
+    if(data.error){ throw new Error(data.error.message || "Gemini API error"); }
+    const text = (data.candidates && data.candidates[0] && data.candidates[0].content &&
+                  data.candidates[0].content.parts && data.candidates[0].content.parts[0].text)
+                 || "ไม่ได้รับคำตอบจาก Gemini";
+    out.textContent = text;
+  }catch(err){
+    out.textContent = "เรียก Gemini API ไม่สำเร็จ: " + err.message;
+    console.error(err);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('runAiBtn').addEventListener('click', runAiAnalysis);
+
+/* =========================================================================
+   หมายเหตุสมมติฐาน (แสดงไว้ท้ายหน้าให้ผู้ใช้ตรวจสอบ)
+   ========================================================================= */
+document.getElementById('assumptionNote').innerHTML =
+  "หมายเหตุการอ่านชีต: ระบบสมมติว่าคอลัมน์ A ของชีต \"ชีต1\" เป็นเวลา/วันที่ของแต่ละแถว และคอลัมน์ B,C,F,G,K,L " +
+  "คือ T, RH, VPD, PAR, Z, VWC ตามลำดับ — และในชีต \"สถานะ\" คอลัมน์ B,C,D,E คือเงื่อนไขของ VPD, PAR, VWC, Z " +
+  "ส่วนคอลัมน์ \"เงื่อนไขพิเศษ\", \"พยากรณ์สถานะความเครียด\", \"ข้อเสนอแนะในการจัดการ\" จะถูกค้นหาโดยอัตโนมัติจากหัวคอลัมน์ " +
+  "(แถวที่ 1) หากชื่อหัวคอลัมน์จริงในชีตของคุณแตกต่างจากนี้ ระบบจะหาไม่พบและจะแสดงค่าว่างในส่วนนั้น " +
+  "กรุณาตรวจสอบให้ชีตเปิดสิทธิ์ \"ทุกคนที่มีลิงก์สามารถดูได้\" จึงจะดึงข้อมูลผ่านเบราว์เซอร์ได้สำเร็จ";
+
+/* =========================================================================
+   START
+   ========================================================================= */
+refreshData();
+setInterval(refreshData, REFRESH_MS);
+aiTimer = setInterval(runAiAnalysis, AI_REFRESH_MS);
+</script>
+</body>
+</html>
